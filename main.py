@@ -32,10 +32,18 @@ class User:
     def __init__(self, username, password):
         self.username = username
         self.password = password
+
+class Customer(User):
+    def __init__(self, username, password):
+        super().__init__(username, password)
         self.addresses = []
 
     def add_address(self, nickname, street, city):
         self.addresses.append({'nickname': nickname, 'street': street, 'city': city})
+
+class Admin(User):
+    def __init__(self, username, password):
+        super().__init__(username, password)
 
 class Review:
     def __init__(self, product_id, user, rating, comment):
@@ -45,11 +53,30 @@ class Review:
         self.comment = comment
 
 class Coupon:
-    def __init__(self, code, type, value, active=True):
+    def __init__(self, code, value, active=True):
         self.code = code
-        self.type = type
         self.value = value
         self.active = active
+    
+    def apply_discount(self, total):
+        raise NotImplementedError("Subclasses should implement this method.")
+
+    def get_display_info(self):
+        raise NotImplementedError("Subclasses should implement this method.")
+
+class PercentageCoupon(Coupon):
+    def apply_discount(self, total):
+        return total * (self.value / 100)
+    
+    def get_display_info(self):
+        return f"\t- {self.code} | Percentage | {self.value}% | {'Active' if self.active else 'Inactive'}"
+
+class FixedCoupon(Coupon):
+    def apply_discount(self, total):
+        return self.value
+
+    def get_display_info(self):
+        return f"\t- {self.code} | Fixed | $ {self.value:.2f} | {'Active' if self.active else 'Inactive'}"
 
 class Ticket:
     def __init__(self, id, user, subject, message):
@@ -115,9 +142,9 @@ class ECommerceSystem:
         self._load_initial_data()
 
     def _load_initial_data(self):
-        admin = User('admin', '1234')
+        admin = Admin('admin', '1234')
         self.users['admin'] = admin
-        customer = User('customer', '123')
+        customer = Customer('customer', '123')
         customer.add_address('Home', 'Fictional Street, 123', 'São Paulo, SP')
         self.users['customer'] = customer
         
@@ -127,7 +154,7 @@ class ECommerceSystem:
             Product(3, 'Mechanical Keyboard', 'Keyboard with blue switches and RGB', 450.00)
         ])
         
-        self.coupons.append(Coupon('PROMO10', 'percentage', 10))
+        self.coupons.append(PercentageCoupon('PROMO10', 10))
 
     def _generate_new_id(self, data_list):
         return max(item.id for item in data_list) + 1 if data_list else 1
@@ -183,7 +210,7 @@ class ECommerceSystem:
                     else:
                         new_password = input("\tPassword: ")
                         if new_password:
-                            self.users[new_user] = User(new_user, new_password)
+                            self.users[new_user] = Customer(new_user, new_password)
                             print(f"\n\tUser '{new_user}' registered!")
                         else:
                             print("\n\t[ERROR] Password cannot be empty.")
@@ -200,7 +227,7 @@ class ECommerceSystem:
             print(f"\n\tUser: {self.current_user.username}\n\tWhat do you want to do?")
             print("\t" + "="*45)
             print("\t1 - Catalog\n\t2 - Cart\n\t3 - Checkout\n\t4 - My Orders\n\t5 - Review Products\n\t6 - My Profile\n\t7 - Customer Support")
-            if self.current_user.username == 'admin':
+            if isinstance(self.current_user, Admin):
                 print("\t--- Administrator Panel ---")
                 print("\t8 - Manage Products\n\t9 - Manage Coupons\n\t10 - Handle Tickets")
             print("\t" + "="*45 + "\n\t99 - Logout\n\t0 - Exit System\n" + "\t" + "="*45)
@@ -214,9 +241,9 @@ class ECommerceSystem:
                 elif choice == 5: self._add_review()
                 elif choice == 6: self._manage_profile()
                 elif choice == 7: self._customer_support_menu()
-                elif choice == 8 and self.current_user.username == 'admin': self._manage_products_admin()
-                elif choice == 9 and self.current_user.username == 'admin': self._manage_coupons_admin()
-                elif choice == 10 and self.current_user.username == 'admin': self._support_menu_admin()
+                elif choice == 8 and isinstance(self.current_user, Admin): self._manage_products_admin()
+                elif choice == 9 and isinstance(self.current_user, Admin): self._manage_coupons_admin()
+                elif choice == 10 and isinstance(self.current_user, Admin): self._support_menu_admin()
                 elif choice == 99: self.cart.clear(); return 'logout'
                 elif choice == 0: return 'exit'
             except ValueError:
@@ -338,8 +365,7 @@ class ECommerceSystem:
         if coupon_code:
             coupon = next((c for c in self.coupons if c.code == coupon_code), None)
             if coupon and coupon.active:
-                if coupon.type == 'percentage': discount = original_total * (coupon.value / 100)
-                else: discount = coupon.value
+                discount = coupon.apply_discount(original_total)
                 applied_coupon = {'code': coupon.code, 'calculated_discount': discount}
                 print(f"\n\t>>> Coupon '{coupon.code}' applied! Discount of $ {discount:.2f} <<<")
             else: print("\n\t[ERROR] Invalid or inactive coupon.")
@@ -348,7 +374,7 @@ class ECommerceSystem:
         print(f"\n\tTOTAL TO PAY: $ {final_total:.2f}")
         UI.wait_for_enter()
 
-        if not self.current_user.addresses: print("\n\tNo registered addresses."); UI.pause_and_clear(); return
+        if not isinstance(self.current_user, Customer) or not self.current_user.addresses: print("\n\tNo registered addresses."); UI.pause_and_clear(); return
         print("\n\tSelect the address:")
         for i, addr in enumerate(self.current_user.addresses): print(f"\t{i+1} - {addr['nickname']}")
         try:
@@ -392,7 +418,7 @@ class ECommerceSystem:
                 if order.applied_coupon: print(f"\tDiscount: $ {order.applied_coupon['calculated_discount']:.2f} (Coupon: {order.applied_coupon['code']})")
                 print(f"\tAddress: {order.delivery_address['street']}")
                 print("\tItems:")
-                for p_id, quantity in order.items.items(): print(f"\t  - {quantity}x {self.find_product_by_id(p_id).name}")
+                for p_id, quantity in order.items.items(): print(f"\t  - {quantity}x {self.find_product_by_id(p_id).name}")
                 print("="*45)
         UI.wait_for_enter()
 
@@ -431,7 +457,11 @@ class ECommerceSystem:
                         else: print("\n\t[ERROR] Passwords do not match or are blank.")
                     else: print("\n\t[ERROR] Incorrect current password.")
                     UI.pause_and_clear()
-                elif choice == 2: self._manage_addresses()
+                elif choice == 2:
+                    if isinstance(self.current_user, Customer):
+                        self._manage_addresses()
+                    else:
+                        print("\n\t[ERROR] This user type does not manage addresses."); UI.pause_and_clear()
                 elif choice == 0: break
             except ValueError: print("\n\t[ERROR] Invalid option."); UI.pause_and_clear()
 
@@ -530,7 +560,7 @@ class ECommerceSystem:
                     UI.clear_screen(); print("\n\t--- Coupon List ---")
                     if not self.coupons: print("\n\tNo coupons.")
                     else:
-                        for c in self.coupons: print(f"\t- {c.code} | {c.type} | {c.value}{'%' if c.type=='percentage' else ''} | {'Active' if c.active else 'Inactive'}")
+                        for c in self.coupons: print(c.get_display_info())
                     UI.wait_for_enter()
                 elif choice == 2:
                     UI.clear_screen(); print("\n\t--- Add Coupon ---")
@@ -539,7 +569,11 @@ class ECommerceSystem:
                     coupon_type = input("\tType ('percentage' or 'fixed'): ").lower()
                     if coupon_type not in ['percentage', 'fixed']: print("\n\t[ERROR] Invalid type."); UI.pause_and_clear(); continue
                     value = float(input(f"\tValue ({'%' if coupon_type=='percentage' else '$'}): "))
-                    self.coupons.append(Coupon(code, coupon_type, value)); print("\n\tCoupon added!")
+                    if coupon_type == 'percentage':
+                        self.coupons.append(PercentageCoupon(code, value))
+                    else:
+                        self.coupons.append(FixedCoupon(code, value))
+                    print("\n\tCoupon added!")
                     UI.pause_and_clear()
                 elif choice == 3:
                     code = input("\tCoupon code to change: ").upper()
